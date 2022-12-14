@@ -6,6 +6,10 @@ from pydantic import BaseModel
 from service.api.exceptions import UserNotFoundError, ModelNotFoundError
 from service.log import app_logger
 
+import pickle
+
+from service.recommend import get_recomendations_ANN
+
 
 class RecoResponse(BaseModel):
     user_id: int
@@ -40,16 +44,15 @@ async def get_reco(
     user_id: int,
     token: HTTPAuthorizationCredentials = Depends(auth_scheme)
 ) -> RecoResponse:
-
-    if not token or token.credentials != request.app.state.api_key:
-        raise HTTPException(
-            status_code=401,
-            detail="Not authenticated",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    # if not token or token.credentials != request.app.state.api_key:
+    #     raise HTTPException(
+    #         status_code=401,
+    #         detail="Not authenticated",
+    #         headers={"WWW-Authenticate": "Bearer"},
+    #     )
 
     app_logger.info(f"Request for model: {model_name}, user_id: {user_id}")
-    model_names = ["test_model"]
+    model_names = ["ANN_tree", "LightFM_model"]
 
     if user_id > 10 ** 9:
         raise UserNotFoundError(error_message=f"User {user_id} not found")
@@ -58,7 +61,33 @@ async def get_reco(
         raise ModelNotFoundError(error_message=f"Model {model_name} not found")
 
     k_recs = request.app.state.k_recs
-    reco = list(range(k_recs))
+
+    if model_name == 'ANN_tree':
+        reco = get_recomendations_ANN(user_id, k_recs)
+
+    if model_name == 'LightFM_model':
+        # загружен датасет с рекомендациями от модели LightFM
+        # модель LightFM обучена на гиперпараметрах:
+        # "learning_rate": 0.02559650065881508,
+        # "no_components": 8,
+        # "loss": 'warp'
+
+        # данные параметры подобраны с помощью Optuna
+
+        recos_df = pickle.load(open('recos.pkl', 'rb'))
+        recos_df = recos_df.loc[
+            recos_df['user_id'] == user_id
+            ]
+
+        reco = recos_df['item_id'].to_list()
+        if len(reco) < 10:
+            # Популярное (найдено, как топ просмотренных фильмов):
+            # 1) group_by (в таблице interactions)
+            # 2) посчитано число строк по каждому айтему
+            # 3) взято топ-10 списка
+            reco = [10440, 15297, 9728, 13865, 4151,
+                    3734, 2657, 4880, 142, 6809]
+
     return RecoResponse(user_id=user_id, items=reco)
 
 
